@@ -185,8 +185,8 @@ def sample_drift_functions(
 
     device = fit.device
     dtype = fit.dtype
-    # CUDA generators need to be created with the matching device.
-    g = torch.Generator(device=device) if device.type == "cuda" else torch.Generator()
+    # Non-CPU devices (CUDA, MPS) require a device-bound generator.
+    g = torch.Generator() if device.type == "cpu" else torch.Generator(device=device)
     if seed is not None:
         g.manual_seed(seed)
     xnew = torch.as_tensor(new_x, dtype=dtype, device=device)

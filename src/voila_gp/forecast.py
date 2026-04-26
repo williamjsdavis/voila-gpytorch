@@ -164,7 +164,8 @@ def simulate_forward(
         dt = fit.sampling_period
     device = fit.device
     dtype = fit.dtype
-    rng = torch.Generator(device=device) if device.type == "cuda" else torch.Generator()
+    # CUDA and MPS both require a device-bound generator; only CPU uses the default.
+    rng = torch.Generator() if device.type == "cpu" else torch.Generator(device=device)
     if seed is not None:
         rng.manual_seed(seed)
 
