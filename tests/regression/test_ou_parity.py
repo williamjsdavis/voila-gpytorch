@@ -23,6 +23,13 @@ convergence (~10 iters) we reach ~36699.4 (a slightly better optimum, +0.9
 above R). Both behaviors are correct; the +1.0 absolute tolerance below
 captures the cross-implementation L-BFGS-B drift while still rejecting any
 genuine algorithmic regression.
+
+Device note: this strict ±0.5 / ±1.0 ELBO tolerance is calibrated for
+CPU/float64 (the R-parity baseline). The same fit on CUDA/float64 lands
+within ±0.5 of CPU (BLAS rounding only). MPS/float32 needs a much looser
+band — see DEVICE_TOLERANCES in tests/unit/test_devices.py — because
+single-precision integration over n=20k points can drift the ELBO by tens
+of units while still recovering the same drift function.
 """
 
 from __future__ import annotations
