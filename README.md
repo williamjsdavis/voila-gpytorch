@@ -24,6 +24,40 @@ uv run jupyter execute --inplace notebooks/*.ipynb   # render tutorials
 
 Python 3.12 is pinned via `.python-version`. All dependencies are declared in `pyproject.toml` and locked in `uv.lock`.
 
+## Choosing a device
+
+Every public entry point (`SDEVI`, `MultiSDEVI`, all kernels) accepts
+`device=` and `dtype=` kwargs. The default is `device="cpu", dtype=torch.float64`,
+which matches the published R-parity validation; opt into accelerators
+explicitly:
+
+```python
+fit = SDEVI(drift_kernel, diff_kernel)                       # CPU / float64 (default)
+fit = SDEVI(drift_kernel, diff_kernel, device="cuda")        # NVIDIA / float64
+fit = SDEVI(drift_kernel, diff_kernel, device="mps")         # Apple Silicon / float32
+```
+
+`dtype=None` resolves automatically (`float64` on CPU and CUDA, `float32` on
+MPS — Metal has no FP64 linalg). Kernels passed to `SDEVI` must already be
+constructed on the chosen device; the constructor checks consistency.
+
+Rough guidance:
+
+- **Small / 1-D problems (n ≲ 30k, m ≲ 15)**: CPU is usually fastest. The
+  L-BFGS-B outer loop runs scipy on CPU regardless, and GPU kernel-launch
+  overhead can dominate the per-step compute on tiny matrices.
+- **Medium and multivariate (n ≳ 60k or 3+ components fit jointly)**: CUDA
+  pays off — typical 5–10× speedup over CPU on an A10. See
+  `notebooks/07_device_comparison.ipynb` for measured numbers.
+- **MPS (Apple Silicon)**: experimental and float32. Fits run, but the ELBO
+  drifts within a documented loose tolerance band; the recovered drift
+  function is unaffected. Bump kernel `epsilon` (e.g. `1e-4` → `1e-3`) if
+  Cholesky fails on tight kernels.
+
+The compatibility layer in `src/voila_gp/_compat.py` shims
+`torch.cholesky_inverse` and `torch.special.ndtri` for backends that lack
+them. `tests/unit/test_devices.py` enforces a per-device tolerance band.
+
 ## Quickstart
 
 ```python
