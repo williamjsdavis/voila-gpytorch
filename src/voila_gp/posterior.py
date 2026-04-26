@@ -34,7 +34,9 @@ def update_drift_closed_form(model: SparseSDEModel) -> dict[str, Tensor]:
     μ_f      = Σ_f · Aᵀ (E ⊙ ΔX)
     """
     E = calculate_E_vector(model.v, model.s_mean, model.s_cov, model.B, model.H_ii)
-    cov_inv = model.K_mm_inv + model.sampling_period * model.A.T @ torch.diag(E) @ model.A
+    # A.T @ diag(E) @ A is equivalent to A.T @ (E[:, None] * A) but uses O(n·m)
+    # memory instead of O(n²). On CUDA the dense diag(E) trips OOM at n≈80000.
+    cov_inv = model.K_mm_inv + model.sampling_period * model.A.T @ (E.unsqueeze(-1) * model.A)
     cov_inv = 0.5 * (cov_inv + cov_inv.T)
     cov = _symmetric_inverse(cov_inv)
     mean = cov @ (model.A.T @ (E * model.dx))
@@ -96,7 +98,7 @@ def _laplace_grad_hess(
         - B.sum(dim=0)
         - 2.0 * (J_mm_inv @ smv)
     )
-    hess = (1.0 / (2.0 * sampling_period)) * (B.T @ torch.diag(weight) @ B) + J_mm_inv
+    hess = (1.0 / (2.0 * sampling_period)) * (B.T @ (weight.unsqueeze(-1) * B)) + J_mm_inv
     hess = 0.5 * (hess + hess.T)
     return grad, hess
 
@@ -162,7 +164,7 @@ def update_diffusion_laplace(
     aux = torch.exp(-(model.B @ smv_star))
     weight = cvec * aux
     auxMat = (
-        1.0 / (2.0 * model.sampling_period) * (model.B.T @ torch.diag(weight) @ model.B)
+        1.0 / (2.0 * model.sampling_period) * (model.B.T @ (weight.unsqueeze(-1) * model.B))
         + model.J_mm_inv
     )
     auxMat = 0.5 * (auxMat + auxMat.T)
