@@ -2,43 +2,63 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project status
-
-Scratch / planning stage. There is **no Python code in the repo yet** — only `README.md` and gitignored reference material. Treat tasks here as greenfield design work, not maintenance of an existing codebase. There are no build, lint, or test commands to run yet; if you add them, document them here.
-
 ## What this project is
 
-A Python / [GPyTorch](https://gpytorch.ai/) reimplementation of [`voila`](https://github.com/citiususc/voila) (García et al., R package). The method does non-parametric estimation of one- and multi-dimensional Langevin SDEs
+`voila-gp` is a Python/GPyTorch port of [`voila`](https://github.com/citiususc/voila), an R package for sparse-VI inference of Langevin SDE drift and diffusion (García et al., *Phys. Rev. E* 96, 022104, 2017). The Python module reproduces the algorithm verbatim against the R/C++ reference and validates against the published OU example to within ~0.5 ELBO units (scientific equivalence).
 
+## Common commands
+
+All commands use [`uv`](https://docs.astral.sh/uv/) — never `pip` or `conda`:
+
+```bash
+uv sync                                              # install dependencies
+uv run pytest                                        # full test suite
+uv run pytest tests/unit                             # unit tests only (fast)
+uv run pytest -m regression                          # OU/DO/multivariate parity tests
+uv run pytest tests/regression/test_ou_parity.py -s  # OU walk-through with verbose log
+uv run python scripts/dump_r_reference.py            # regenerate tests/data fixtures from voila/data/*.rda
+uv run python scripts/build_notebooks.py             # rebuild tutorial notebooks from source
+uv run jupyter execute --inplace notebooks/*.ipynb   # execute notebooks and persist outputs
+uv run ruff check src tests scripts                  # lint
+uv run pyright src                                   # type-check
 ```
-dX_t = f(X_t) dt + g(X_t) dW_t
-```
 
-from densely-observed time series, by modelling drift `f` and diffusion `g` as Gaussian processes and learning sparse approximations via variational inference with inducing variables (García et al., *Phys. Rev. E* 96, 022104, 2017).
+## Architecture
 
-The port's design goals (per `README.md`): GPU acceleration, autograd-driven variational lower bound, modular GPyTorch kernels, and reproduction of the published examples (Ornstein–Uhlenbeck, Dansgaard–Oeschger events, multivariate cases).
+Module-by-module mapping to the R/C++ reference (under `voila/`, gitignored locally):
 
-## Reference material on disk (gitignored, kept locally)
+| Python module | Reference | Purpose |
+|--|--|--|
+| `voila_gp.kernels`         | `voila/src/common_kernels.{h,cpp}`         | 5 kernels with shared `cov(X)` / `cov(X,Y)` / `variances(X)` API |
+| `voila_gp.sparse_gp`       | `calculate_kernel_matrices` in `sde_variational_inferencer.cpp` | K_mm, K_mm_inv, K_nm, A, Q_ii |
+| `voila_gp.elbo`            | `get_lower_bound`, `calculate_E_vector`, `calculate_ksi_vector` | Variational bound and its sub-quantities |
+| `voila_gp.posterior`       | `update_distributions`                     | Closed-form drift + Laplace diffusion (Newton with analytical gradient/Hessian) |
+| `voila_gp.inference`       | `do_inference`                             | Outer loop: alternation + scipy L-BFGS-B on hyperparameters |
+| `voila_gp.prediction`      | `predict.sgp_sde` in `voila/R/sde_prediction.R` | Posterior drift / log-normal-diffusion at new points |
+| `voila_gp.init_heuristics` | `select_diffusion_parameters` in R         | Calibrates v and kernel amplitude from data |
 
-The `.gitignore` excludes `voila/` and `paper/` from version control, but they are present in the working tree and are the primary specification for what to build:
+### Important design decisions (non-obvious from the code)
 
-- `voila/` — original R package source. Authoritative reference for the algorithm. Key files:
-  - `voila/R/sde_vi.R` — top-level variational-inference driver (`sde_vi`, the function the README example calls).
-  - `voila/src/sde_variational_inferencer.{h,cpp}` — C++/Armadillo implementation of the VI updates and lower-bound computation. This is where the math actually lives.
-  - `voila/R/kernel.R` + `voila/src/kernel.{h,cpp}`, `common_kernels.{h,cpp}`, `kernel_modules.cpp` — kernel definitions exposed via Rcpp modules (`rq_kernel`, `exp_const_kernel`, etc.). The diffusion uses a log-normal GP, with a constant + exponential kernel, to enforce positivity — this is non-obvious and easy to miss when porting.
-  - `voila/R/select_diffusion_parameters.R` — heuristic for setting the diffusion kernel's amplitude and the log-normal mean `v` from the data; used for initialization in the README example.
-  - `voila/R/simulate_sde.R` — SDE simulation utility (delegates to the `yuima` R package). Useful for generating the OU validation data.
-  - `voila/R/sde_prediction.R` — posterior prediction for drift/diffusion (note the `log = TRUE` flag for diffusion).
-  - `voila/vignettes/` and `voila/demo/` — runnable examples (DO events, multivariate). These are the validation targets.
-  - `voila/README.md` — end-to-end OU example with expected lower-bound trajectory; useful as a smoke-test target.
-- `paper/` — the published paper (`1704.04375v2.pdf`) and its LaTeX source (`Report.tex`, figures). Definitive source for notation and the variational lower-bound derivation.
+- **Kernel `amplitude` is FIXED, not trained** — this matches voila's reference C++ where `amplitude` is closure-captured in the kernel lambda. Only shape parameters (`length_scales`, `alpha`, `exp_amplitude`, etc.) appear in `_HP_NAMES` and get optimized. Changing this affects parity with R.
+- **Posterior tensors are detached during HP optimization** — the hyperparameter L-BFGS-B step holds `f_mean, f_cov, s_mean, s_cov` constant. Autograd flows only through kernel parameters, inducing points, and `v`.
+- **scipy L-BFGS-B, not torch.optim.LBFGS** — voila links Fortran L-BFGS-B; scipy wraps the same routine. This minimizes cross-implementation drift in iterate counts.
+- **Lower-bound tolerance is ±0.5 absolute on the OU benchmark** (≈ 1.5×10⁻⁵ relative). Tighter tolerances would falsely flag scipy-vs-Fortran convergence differences as bugs. See `tests/regression/test_ou_parity.py` for the rationale.
+- **Diffusion updates use a Laplace approximation, NOT the optimal KL-minimizing Gaussian** — therefore individual diffusion updates can decrease L slightly. This matches voila's behavior. Tests should not require monotone L improvement on every diffusion step; they should require eventual convergence.
+- **No R install required** — vendored fixtures live in `tests/data/*.npz` (regenerated from `voila/data/*.rda` via `scripts/dump_r_reference.py`, which uses `pyreadr`). The S4 `.RDS` regression checkpoints (`oxygen_estimates.RDS`, `multivariate_inference.RDS`) cannot be decoded without R; we validate qualitatively against the published vignette claims.
 
-When implementing a piece of the algorithm, prefer cross-checking the C++ source (`sde_variational_inferencer.cpp`) against the paper rather than relying on the R wrappers alone — the wrappers mostly marshal arguments.
+## Testing strategy
 
-## Architectural notes for the port
+- `tests/unit/test_<module>.py` — one file per `src/voila_gp/<module>.py`. Each test names a specific quantity and tolerance, with comments justifying the value. No smoke-only tests in this layer.
+- `tests/regression/test_*_parity.py` — full pipeline runs against the R reference's published anchors. Marked `@pytest.mark.regression` and `@pytest.mark.slow`.
+- The OU regression test (`test_ou_parity.py`) checks per-iteration trajectory anchors against R's quoted log; the DO events / multivariate tests check qualitative properties (bistable structure, restoring force) since their `.RDS` regression checkpoints are unreachable without R.
 
-A few decisions are implied by the goals and the reference implementation; surface them explicitly when designing new code:
+## Reference material on disk (gitignored)
 
-- **Drift vs. diffusion are not symmetric.** Drift is a plain GP; diffusion is a log-normal GP (GP on `log g²`) with a constant-plus-exponential kernel. Any abstraction over "the two GPs" must keep this asymmetry first-class.
-- **Inducing-point variational inference, not exact GPs.** Pseudo-input locations and variational parameters are *both* learned. GPyTorch's `VariationalStrategy` / `InducingPointKernel` machinery is the natural target, but the lower bound in the paper is specific to the SDE likelihood (Euler–Maruyama-style increments) and will need a custom marginal log-likelihood, not GPyTorch's stock ELBO.
-- **Validation, not just running.** A change is "done" when it reproduces an R-package result on one of the published examples (OU lower bound trajectory, DO bistable drift, multivariate fields), not merely when it runs without error.
+- `voila/` — original R/C++ package. Read this before changing kernel formulas, the ELBO, or the inference loop. Key files: `R/sde_vi.R`, `src/sde_variational_inferencer.{h,cpp}`, `src/common_kernels.{h,cpp}`, `R/sde_prediction.R`, `R/select_diffusion_parameters.R`, `vignettes/*.Rmd`.
+- `paper/` — the published paper and its LaTeX source. Definitive notation for the lower-bound derivation.
+
+## Out of scope / deferred
+
+- KBR (`fit_kbr_sde`) and polynomial (`fit_polynomial_sde`) alternatives in `voila/demo/` — not part of the core VI method.
+- A high-fidelity Python port of `simulate_sde` (yuima wrapper) — `voila_gp.simulate.euler_maruyama` is a minimal convenience, not a faithful yuima reproduction.
+- Multi-component joint inference — currently each component is fit independently (`target_index` selects one), matching voila.

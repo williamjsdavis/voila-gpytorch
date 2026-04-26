@@ -1,0 +1,75 @@
+[project]
+name = "voila-gp"
+version = "0.1.0"
+description = "Python/GPyTorch reimplementation of voila — sparse variational inference of Langevin SDEs"
+authors = [
+    { name = "William Davis", email = "william.davis@terraai.earth" },
+]
+requires-python = ">=3.12,<3.13"
+readme = "README.md"
+license = { text = "GPL-3.0-or-later" }
+dependencies = [
+    "torch>=2.2,<3",
+    "gpytorch>=1.11,<2",
+    "scipy>=1.12,<2",
+    "numpy>=1.26,<3",
+    "pyreadr>=0.5,<1",
+    "matplotlib>=3.8,<4",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8,<9",
+    "pytest-xdist>=3.5,<4",
+    "hypothesis>=6.100,<7",
+    "ruff>=0.6,<1",
+    "pyright>=1.1.380,<2",
+    "jupyter>=1.0,<2",
+    "nbformat>=5.10,<6",
+    "nbclient>=0.10,<1",
+    "ipykernel>=6.29,<7",
+]
+
+[build-system]
+requires = ["uv_build>=0.8.15,<0.9.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+# N806/N803 (variable/arg should be lowercase) conflicts with mathematical
+# notation in scientific code (X, Y, K_mm, A, B, ...). Skip the N rules.
+ignore = [
+    "E501",   # line length
+    "B028",   # warnings.warn without stacklevel
+    "RUF005", # collection-literal-concatenation
+    "RUF001", # ambiguous unicode char in string  (Greek letters intentional)
+    "RUF002", # ambiguous unicode char in docstring (math notation intentional)
+    "E741",   # ambiguous variable name (allow `l`, `I` for math identifiers)
+]
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+include = ["src", "tests"]
+# torch ships incomplete __all__ — its public functions (torch.full, torch.exp,
+# torch.sqrt, torch.einsum, etc.) are runtime-importable but pyright flags them
+# as private. Silence that one rule; everything else stays on.
+reportPrivateImportUsage = "none"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "slow: tests that run a full inference loop",
+    "regression: parity tests against the R reference",
+]
+filterwarnings = [
+    # Tests routinely call float(tensor) on grad-requiring tensors for
+    # assertion comparisons. This is intentional; the production code path
+    # (voila_gp.*) does not trigger it.
+    "ignore:Converting a tensor with requires_grad=True to a scalar:UserWarning",
+]
