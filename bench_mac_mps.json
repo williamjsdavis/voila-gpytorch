@@ -1,0 +1,54 @@
+{
+  "device": "mps",
+  "dtype": "float32",
+  "machine": {
+    "hostname": "Williams-MacBook-Pro.local",
+    "platform": "macOS-14.6.1-arm64-arm-64bit",
+    "python": "3.12.2",
+    "torch": "2.11.0",
+    "cpu_count": 12
+  },
+  "results": [
+    {
+      "problem": "ou_small",
+      "wall_clock_s": [
+        2.3456074589921627,
+        1.667823458003113,
+        1.7421638340019854
+      ],
+      "median_s": 1.7421638340019854,
+      "final_L": 36682.48046875,
+      "iterations": 5
+    },
+    {
+      "problem": "ou_medium",
+      "wall_clock_s": [
+        7.117288000008557,
+        7.123608875001082,
+        7.0526882499980275
+      ],
+      "median_s": 7.117288000008557,
+      "final_L": 146816.796875,
+      "iterations": 4
+    },
+    {
+      "problem": "lorenz",
+      "wall_clock_s": [
+        24.837867666996317,
+        24.924635874995147,
+        25.002655624994077
+      ],
+      "median_s": 24.924635874995147,
+      "final_L": [
+        34844.15625,
+        34021.66015625,
+        33611.4140625
+      ],
+      "iterations": [
+        4,
+        4,
+        4
+      ]
+    }
+  ]
+}

@@ -51,9 +51,17 @@ class ProblemResult:
 
 
 def _sync(device: torch.device) -> None:
-    """Block until pending GPU work is done, so wall-clock measures actual compute."""
+    """Block until pending GPU work is done, so wall-clock measures actual compute.
+
+    Both CUDA and MPS dispatch asynchronously: without an explicit synchronize,
+    `time.perf_counter()` can stop while GPU work is still in flight, making
+    the device look artificially fast. CPU is naturally synchronous and needs
+    no barrier.
+    """
     if device.type == "cuda":
         torch.cuda.synchronize()
+    elif device.type == "mps":
+        torch.mps.synchronize()
 
 
 def _machine_info(device: torch.device) -> dict[str, Any]:
@@ -186,16 +194,24 @@ def _problem_lorenz(device: torch.device, dtype: torch.dtype) -> ProblemResult:
     cov = np.cov(ts, rowvar=False)
     inducing = rng2.multivariate_normal(mean, cov, size=30)
 
+    # Cholesky on the Lorenz K_mm (m=30) loses positive-definiteness under FP32
+    # at the original epsilon=1e-4 — the kernel hyperparameters drift into a
+    # near-degenerate region during L-BFGS-B and round-off pushes the matrix
+    # below PD. Bumping the jitter to 1e-3 stabilizes the FP32 path without
+    # measurably affecting the FP64 (CPU/CUDA) numbers. See BENCH_TODO_MAC.md
+    # for the original failure mode and the documented mitigation.
+    lorenz_eps = 1e-3 if dtype == torch.float32 else 1e-4
+
     def drift_kernel_factory(_x, _h, _i):
         return ExpKernel(
             amplitude=200.0, length_scales=torch.tensor([6.0, 6.0, 6.0]),
-            epsilon=1e-4, device=device, dtype=dtype,
+            epsilon=lorenz_eps, device=device, dtype=dtype,
         )
 
     def diff_kernel_factory(_x, _h, _i):
         return ExpKernel(
             amplitude=2.0, length_scales=torch.tensor([6.0, 6.0, 6.0]),
-            epsilon=1e-4, device=device, dtype=dtype,
+            epsilon=lorenz_eps, device=device, dtype=dtype,
         )
 
     times: list[float] = []
