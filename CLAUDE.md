@@ -27,6 +27,8 @@ uv run pyright src                                   # type-check
 
 Module-by-module mapping to the R/C++ reference (under `voila/`, gitignored locally):
 
+### Core (ports of voila R/C++)
+
 | Python module | Reference | Purpose |
 |--|--|--|
 | `voila_gp.kernels`         | `voila/src/common_kernels.{h,cpp}`         | 5 kernels with shared `cov(X)` / `cov(X,Y)` / `variances(X)` API |
@@ -36,6 +38,21 @@ Module-by-module mapping to the R/C++ reference (under `voila/`, gitignored loca
 | `voila_gp.inference`       | `do_inference`                             | Outer loop: alternation + scipy L-BFGS-B on hyperparameters |
 | `voila_gp.prediction`      | `predict.sgp_sde` in `voila/R/sde_prediction.R` | Posterior drift / log-normal-diffusion at new points |
 | `voila_gp.init_heuristics` | `select_diffusion_parameters` in R         | Calibrates v and kernel amplitude from data |
+| `voila_gp.simulate`        | (new helper)                               | Lightweight Euler-Maruyama for tests/notebooks |
+
+### Research extensions (new in voila-gp, not in original voila)
+
+| Python module | Purpose |
+|--|--|
+| `voila_gp.multivariate` | `MultiSDEVI` fits all components in one call; aggregated `predict_drift` / `predict_diffusion`; `sample_drift_functions` for full posterior function samples |
+| `voila_gp.forecast`     | `simulate_forward(fit, x0, n_steps, n_ensembles, ...)` — Monte Carlo ensemble forecast; `quantiles()` helper for prediction bands |
+| `voila_gp.physics`      | `effective_potential(x, drift, g²)` returns drift potential V, log-stationary potential U, minima/maxima; `kramers_escape_time(...)` returns mean first-passage time; `stationary_density(...)` |
+| `voila_gp.diagnostics`  | `predictive_log_likelihood(fit, held_out)` for held-out scoring; `compare_models(fits, held_out)` for Bayesian model selection |
+
+The Lorenz '63 demo (`notebooks/04_lorenz63.ipynb`) is the headline use of the
+extension stack: noisy 3-D chaotic trajectory → `MultiSDEVI.fit` → drift
+correlations 0.999/0.995/0.998 with truth → `simulate_forward` → recovered
+butterfly attractor with median 19 wing-switches per forecast (truth: 21).
 
 ### Important design decisions (non-obvious from the code)
 

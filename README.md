@@ -73,20 +73,54 @@ diff = predict_diffusion(
 
 ## Tutorials
 
-Three Jupyter notebooks under `notebooks/` mirror the original R vignettes:
+Seven Jupyter notebooks under `notebooks/`:
 
 | Notebook | Topic |
 |--|--|
-| `01_quickstart_ou.ipynb` | Ornstein–Uhlenbeck — reproduces voila/README.md |
-| `02_do_events.ipynb`     | Dansgaard–Oeschger paleoclimate events (NGRIP δ¹⁸O) |
-| `03_multivariate.ipynb`  | 2-D harmonic-oscillator-analogue example |
+| `00_research_overview.ipynb`     | Headlines from all four extensions |
+| `01_quickstart_ou.ipynb`         | Ornstein–Uhlenbeck — reproduces voila/README.md |
+| `02_do_events.ipynb`             | Dansgaard–Oeschger paleoclimate events (NGRIP δ¹⁸O) |
+| `03_multivariate.ipynb`          | 2-D harmonic-oscillator-analogue example |
+| `04_lorenz63.ipynb`              | Stochastic Lorenz '63 attractor reconstruction (3-D chaos) |
+| `05_do_events_physics.ipynb`     | Effective potential + Kramers' rates for DO transitions |
+| `06_performance.ipynb`           | Scaling: runtime vs n and m |
 
-Build them from the source script and execute with outputs:
+Rebuild and execute end-to-end:
 
 ```bash
 uv run python scripts/build_notebooks.py
+uv run python scripts/build_lorenz_notebook.py
+uv run python scripts/build_do_events_physics_notebook.py
+uv run python scripts/build_performance_notebook.py
+uv run python scripts/build_research_overview_notebook.py
 uv run jupyter execute --inplace notebooks/*.ipynb
 ```
+
+## Research extensions beyond the original voila
+
+Once the port was validated against R, four extensions were added that the
+original package did not demonstrate:
+
+1. **`MultiSDEVI` — multivariate convenience API** (`voila_gp.multivariate`).
+   Fit all components in one call; predict joint drift/diffusion fields;
+   sample full functions from the GP posterior.
+2. **Probabilistic forecasting** (`voila_gp.forecast`). Generate Monte Carlo
+   ensemble trajectories from the inferred SDE with calibrated uncertainty
+   bands (aleatoric + epistemic).
+3. **Physics analysis** (`voila_gp.physics`). From a 1-D fit, derive the
+   drift potential V(x), the log-stationary potential U(x), the steady-state
+   Fokker–Planck density, and the Kramers mean first-passage time between
+   metastable wells. Validated against the analytical double-well rate to
+   0.012%.
+4. **Stochastic Lorenz '63 reconstruction** (`04_lorenz63.ipynb`). Fit a 3-D
+   chaotic SDE from a single noisy trajectory, recover the butterfly
+   attractor with drift correlations 0.999/0.995/0.998 and wing-switch
+   statistics matching ground truth (median 19 vs truth's 21).
+
+The DO events analysis (`05_do_events_physics.ipynb`) puts these together:
+the inferred Langevin equation gives mean residence times of ~2700 yr in
+each metastable climate state — the right order of magnitude for empirically
+observed Dansgaard–Oeschger spacings.
 
 ## Validation against the R reference
 
@@ -114,6 +148,10 @@ The tight match through the early iterations confirms algorithmic identity with 
 | `voila_gp.prediction`      | Posterior drift/diffusion at new points; log-normal back-transform. |
 | `voila_gp.init_heuristics` | `select_diffusion_parameters` (verbatim port of the R helper). |
 | `voila_gp.simulate`        | Lightweight Euler-Maruyama for tutorials/tests. |
+| `voila_gp.multivariate`    | **NEW** `MultiSDEVI`, joint prediction, posterior function sampling. |
+| `voila_gp.forecast`        | **NEW** `simulate_forward` ensemble forecaster + uncertainty quantification. |
+| `voila_gp.physics`         | **NEW** Effective potential, Kramers' first-passage times, stationary density. |
+| `voila_gp.diagnostics`     | **NEW** Held-out predictive log-likelihood, Bayesian model comparison. |
 
 The R `voila/` and `paper/` directories remain present locally as the canonical specification (gitignored). Run `scripts/dump_r_reference.py` to regenerate `tests/data/*.npz` fixtures from the bundled `.rda` files.
 
