@@ -79,7 +79,7 @@ for b in benches:
             'median_s': r['median_s'],
             'final_L': r['final_L'],
         })
-df = pd.DataFrame(rows)
+df = pd.DataFrame(rows, columns=['label', 'device', 'dtype', 'problem', 'median_s', 'final_L'])
 df
 """),
     md("""## Wall-clock per problem, per device
@@ -91,7 +91,7 @@ Lower is better. Bars are the median of three runs."""),
     print('  uv run python scripts/run_device_benchmark.py --device cuda --output bench_a10_cuda.json')
     print('  (and similar on Mac CPU / MPS)')
 else:
-    problems = df['problem'].unique()
+    problems = list(df['problem'].unique())
     fig, axes = plt.subplots(1, len(problems), figsize=(4.2 * len(problems), 4),
                              squeeze=False)
     for ax, problem in zip(axes[0], problems):
@@ -106,19 +106,23 @@ else:
 
 Each Python device's wall-clock divided by the slowest CPU baseline on the
 same problem. Higher = faster."""),
-    code("""if not df.empty and 'CPU' in ' '.join(df['label'].unique()).upper():
-    # Pick the slowest CPU run as baseline (typically the Mac CPU when both
-    # are present; falls back to A10 CPU).
-    cpu_mask = df['label'].str.contains('CPU', case=False)
-    cpu_baseline = df[cpu_mask].groupby('problem')['median_s'].max()
-    spd = df.copy()
-    spd['speedup_vs_slowest_cpu'] = spd.apply(
-        lambda r: cpu_baseline.get(r['problem'], np.nan) / r['median_s'], axis=1
-    )
-    pivot = spd.pivot(index='label', columns='problem', values='speedup_vs_slowest_cpu')
-    display(pivot.round(2))
-else:
+    code("""if df.empty:
     print('Not enough data to build a speedup table yet — need at least one CPU run.')
+else:
+    labels_str = ' '.join(df['label'].unique()).upper()
+    if 'CPU' in labels_str:
+        # Pick the slowest CPU run as baseline (typically the Mac CPU when both
+        # are present; falls back to A10 CPU).
+        cpu_mask = df['label'].str.contains('CPU', case=False)
+        cpu_baseline = df[cpu_mask].groupby('problem')['median_s'].max()
+        spd = df.copy()
+        spd['speedup_vs_slowest_cpu'] = spd.apply(
+            lambda r: cpu_baseline.get(r['problem'], np.nan) / r['median_s'], axis=1
+        )
+        pivot = spd.pivot(index='label', columns='problem', values='speedup_vs_slowest_cpu')
+        display(pivot.round(2))
+    else:
+        print('No CPU run found — speedup table needs a CPU baseline.')
 """),
     md("""## Final ELBO across devices on `ou_small`
 
