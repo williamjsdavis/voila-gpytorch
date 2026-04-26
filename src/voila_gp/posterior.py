@@ -11,6 +11,7 @@ from __future__ import annotations
 import torch
 from torch import Tensor
 
+from ._compat import cholesky_inverse_compat
 from .elbo import SparseSDEModel, calculate_E_vector, calculate_ksi_vector
 
 __all__ = [
@@ -22,7 +23,7 @@ __all__ = [
 
 def _symmetric_inverse(A: Tensor) -> Tensor:
     L = torch.linalg.cholesky(A)
-    Ainv = torch.cholesky_inverse(L)
+    Ainv = cholesky_inverse_compat(L)
     return 0.5 * (Ainv + Ainv.T)
 
 

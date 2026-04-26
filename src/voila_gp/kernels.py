@@ -19,6 +19,8 @@ from __future__ import annotations
 import torch
 from torch import Tensor, nn
 
+from ._compat import _default_dtype_for
+
 __all__ = [
     "ClampedExpLinKernel",
     "ExpConstKernel",
@@ -37,11 +39,17 @@ _INF = 1e30  # finite stand-in for +inf in scipy L-BFGS-B bounds
 _POS_LB = 1e-4
 
 
-def _as_param(value: Tensor | float, name: str) -> nn.Parameter:
+def _as_param(
+    value: Tensor | float,
+    name: str,
+    *,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> nn.Parameter:
     if not isinstance(value, Tensor):
-        value = torch.tensor(value, dtype=torch.float64)
-    if value.dtype != torch.float64:
-        value = value.to(torch.float64)
+        value = torch.tensor(value, dtype=dtype, device=device)
+    else:
+        value = value.to(device=device, dtype=dtype)
     return nn.Parameter(value.clone())
 
 
@@ -63,11 +71,28 @@ class Kernel(nn.Module):
     inside the pairwise expression).
     """
 
-    def __init__(self, epsilon: float = 0.0) -> None:
+    def __init__(
+        self,
+        epsilon: float = 0.0,
+        *,
+        device: str | torch.device | None = None,
+        dtype: torch.dtype | None = None,
+    ) -> None:
         super().__init__()
         if epsilon < 0:
             raise ValueError(f"epsilon must be non-negative, got {epsilon}")
         self.epsilon = float(epsilon)
+        resolved_device = torch.device(device) if device is not None else torch.device("cpu")
+        self._device = resolved_device
+        self._dtype = dtype if dtype is not None else _default_dtype_for(resolved_device)
+
+    @property
+    def device(self) -> torch.device:
+        return self._device
+
+    @property
+    def dtype(self) -> torch.dtype:
+        return self._dtype
 
     def _kernel(self, X: Tensor, Y: Tensor) -> Tensor:  # pragma: no cover - abstract
         raise NotImplementedError
@@ -100,7 +125,7 @@ class Kernel(nn.Module):
     def get_hyperparams(self) -> Tensor:
         """Flat vector of trainable kernel hyperparameters (in declaration order)."""
         chunks = [getattr(self, n).reshape(-1) for n in self._HP_NAMES]
-        return torch.cat(chunks) if chunks else torch.empty(0, dtype=torch.float64)
+        return torch.cat(chunks) if chunks else torch.empty(0, dtype=self._dtype, device=self._device)
 
     def set_hyperparams(self, vec: Tensor) -> None:
         """Inverse of get_hyperparams — reshape and re-assign in place (no autograd graph)."""
@@ -108,7 +133,9 @@ class Kernel(nn.Module):
         for n in self._HP_NAMES:
             cur = getattr(self, n)
             size = cur.numel()
-            new_val = vec[offset : offset + size].reshape(cur.shape).to(cur.dtype)
+            new_val = (
+                vec[offset : offset + size].reshape(cur.shape).to(device=cur.device, dtype=cur.dtype)
+            )
             with torch.no_grad():
                 cur.copy_(new_val)
             offset += size
@@ -140,20 +167,28 @@ class ExpKernel(Kernel):
     _HP_NAMES = ("length_scales",)
 
     def __init__(
-        self, amplitude: float, length_scales: Tensor, epsilon: float = 0.0
+        self,
+        amplitude: float,
+        length_scales: Tensor,
+        epsilon: float = 0.0,
+        *,
+        device: str | torch.device | None = None,
+        dtype: torch.dtype | None = None,
     ) -> None:
-        super().__init__(epsilon=epsilon)
+        super().__init__(epsilon=epsilon, device=device, dtype=dtype)
         if amplitude < 0:
             raise ValueError("amplitude must be non-negative")
         self.amplitude = float(amplitude)  # fixed (non-trainable; matches voila)
-        self.length_scales = _as_param(length_scales, "length_scales")
+        self.length_scales = _as_param(
+            length_scales, "length_scales", device=self._device, dtype=self._dtype
+        )
         if self.length_scales.ndim != 1:
             raise ValueError("length_scales must be 1-D (per-dimension ARD)")
 
     def hp_bounds(self) -> tuple[Tensor, Tensor]:
         d = self.length_scales.numel()
-        lower = torch.full((d,), _POS_LB, dtype=torch.float64)
-        upper = torch.full((d,), _INF, dtype=torch.float64)
+        lower = torch.full((d,), _POS_LB, dtype=self._dtype, device=self._device)
+        upper = torch.full((d,), _INF, dtype=self._dtype, device=self._device)
         return lower, upper
 
     def _kernel(self, X: Tensor, Y: Tensor) -> Tensor:
@@ -181,18 +216,21 @@ class RQKernel(Kernel):
         alpha: float | Tensor,
         length_scale: float | Tensor,
         epsilon: float = 0.0,
+        *,
+        device: str | torch.device | None = None,
+        dtype: torch.dtype | None = None,
     ) -> None:
-        super().__init__(epsilon=epsilon)
+        super().__init__(epsilon=epsilon, device=device, dtype=dtype)
         if amplitude < 0:
             raise ValueError("amplitude must be non-negative")
         self.amplitude = float(amplitude)  # fixed
-        self.alpha = _as_param(alpha, "alpha")
-        ls = torch.as_tensor(length_scale, dtype=torch.float64).reshape(())
+        self.alpha = _as_param(alpha, "alpha", device=self._device, dtype=self._dtype)
+        ls = torch.as_tensor(length_scale, dtype=self._dtype, device=self._device).reshape(())
         self.length_scale = nn.Parameter(ls.clone())
 
     def hp_bounds(self) -> tuple[Tensor, Tensor]:
-        lower = torch.full((2,), _POS_LB, dtype=torch.float64)
-        upper = torch.full((2,), _INF, dtype=torch.float64)
+        lower = torch.full((2,), _POS_LB, dtype=self._dtype, device=self._device)
+        upper = torch.full((2,), _INF, dtype=self._dtype, device=self._device)
         return lower, upper
 
     def _kernel(self, X: Tensor, Y: Tensor) -> Tensor:
@@ -222,8 +260,11 @@ class ExpConstKernel(Kernel):
         exp_amplitude: float | Tensor,
         length_scales: Tensor,
         epsilon: float = 0.0,
+        *,
+        device: str | torch.device | None = None,
+        dtype: torch.dtype | None = None,
     ) -> None:
-        super().__init__(epsilon=epsilon)
+        super().__init__(epsilon=epsilon, device=device, dtype=dtype)
         if max_amplitude < 0:
             raise ValueError("max_amplitude must be non-negative")
         ea = float(exp_amplitude.item() if isinstance(exp_amplitude, Tensor) else exp_amplitude)
@@ -232,8 +273,12 @@ class ExpConstKernel(Kernel):
                 f"exp_amplitude={ea} must satisfy 0 ≤ exp_amplitude ≤ max_amplitude={max_amplitude}"
             )
         self.max_amplitude = float(max_amplitude)  # fixed (non-trainable; matches voila)
-        self.exp_amplitude = _as_param(exp_amplitude, "exp_amplitude")
-        self.length_scales = _as_param(length_scales, "length_scales")
+        self.exp_amplitude = _as_param(
+            exp_amplitude, "exp_amplitude", device=self._device, dtype=self._dtype
+        )
+        self.length_scales = _as_param(
+            length_scales, "length_scales", device=self._device, dtype=self._dtype
+        )
 
     def hp_bounds(self) -> tuple[Tensor, Tensor]:
         d = self.length_scales.numel()
@@ -242,14 +287,14 @@ class ExpConstKernel(Kernel):
         # downstream code adds epsilon jitter so K_mm stays non-singular.
         lower = torch.cat(
             [
-                torch.zeros(1, dtype=torch.float64),
-                torch.full((d,), _POS_LB, dtype=torch.float64),
+                torch.zeros(1, dtype=self._dtype, device=self._device),
+                torch.full((d,), _POS_LB, dtype=self._dtype, device=self._device),
             ]
         )
         upper = torch.cat(
             [
-                torch.tensor([self.max_amplitude], dtype=torch.float64),
-                torch.full((d,), _INF, dtype=torch.float64),
+                torch.tensor([self.max_amplitude], dtype=self._dtype, device=self._device),
+                torch.full((d,), _INF, dtype=self._dtype, device=self._device),
             ]
         )
         return lower, upper
@@ -284,8 +329,11 @@ class SumExpKernel(Kernel):
         length_scales1: Tensor,
         length_scales2: Tensor,
         epsilon: float = 0.0,
+        *,
+        device: str | torch.device | None = None,
+        dtype: torch.dtype | None = None,
     ) -> None:
-        super().__init__(epsilon=epsilon)
+        super().__init__(epsilon=epsilon, device=device, dtype=dtype)
         if max_amplitude < 0:
             raise ValueError("max_amplitude must be non-negative")
         a1 = float(amplitude1.item() if isinstance(amplitude1, Tensor) else amplitude1)
@@ -296,22 +344,28 @@ class SumExpKernel(Kernel):
         if length_scales1.shape != length_scales2.shape:
             raise ValueError("length_scales1 and length_scales2 must share shape")
         self.max_amplitude = float(max_amplitude)
-        self.amplitude1 = _as_param(amplitude1, "amplitude1")
-        self.length_scales1 = _as_param(length_scales1, "length_scales1")
-        self.length_scales2 = _as_param(length_scales2, "length_scales2")
+        self.amplitude1 = _as_param(
+            amplitude1, "amplitude1", device=self._device, dtype=self._dtype
+        )
+        self.length_scales1 = _as_param(
+            length_scales1, "length_scales1", device=self._device, dtype=self._dtype
+        )
+        self.length_scales2 = _as_param(
+            length_scales2, "length_scales2", device=self._device, dtype=self._dtype
+        )
 
     def hp_bounds(self) -> tuple[Tensor, Tensor]:
         d = self.length_scales1.numel()
         lower = torch.cat(
             [
-                torch.zeros(1, dtype=torch.float64),
-                torch.full((2 * d,), _POS_LB, dtype=torch.float64),
+                torch.zeros(1, dtype=self._dtype, device=self._device),
+                torch.full((2 * d,), _POS_LB, dtype=self._dtype, device=self._device),
             ]
         )
         upper = torch.cat(
             [
-                torch.tensor([self.max_amplitude], dtype=torch.float64),
-                torch.full((2 * d,), _INF, dtype=torch.float64),
+                torch.tensor([self.max_amplitude], dtype=self._dtype, device=self._device),
+                torch.full((2 * d,), _INF, dtype=self._dtype, device=self._device),
             ]
         )
         return lower, upper
@@ -348,25 +402,32 @@ class ClampedExpLinKernel(Kernel):
         lin_center: float | Tensor,
         length_scales: Tensor,
         epsilon: float = 0.0,
+        *,
+        device: str | torch.device | None = None,
+        dtype: torch.dtype | None = None,
     ) -> None:
-        super().__init__(epsilon=epsilon)
+        super().__init__(epsilon=epsilon, device=device, dtype=dtype)
         if max_amplitude < 0:
             raise ValueError("max_amplitude must be non-negative")
         self.max_amplitude = float(max_amplitude)
-        self.lin_amplitude = _as_param(lin_amplitude, "lin_amplitude")
-        lc = torch.as_tensor(lin_center, dtype=torch.float64).reshape(())
+        self.lin_amplitude = _as_param(
+            lin_amplitude, "lin_amplitude", device=self._device, dtype=self._dtype
+        )
+        lc = torch.as_tensor(lin_center, dtype=self._dtype, device=self._device).reshape(())
         self.lin_center = nn.Parameter(lc.clone())
-        self.length_scales = _as_param(length_scales, "length_scales")
+        self.length_scales = _as_param(
+            length_scales, "length_scales", device=self._device, dtype=self._dtype
+        )
 
     def hp_bounds(self) -> tuple[Tensor, Tensor]:
         d = self.length_scales.numel()
         lower = torch.cat(
             [
-                torch.tensor([0.0, -_INF], dtype=torch.float64),
-                torch.full((d,), _POS_LB, dtype=torch.float64),
+                torch.tensor([0.0, -_INF], dtype=self._dtype, device=self._device),
+                torch.full((d,), _POS_LB, dtype=self._dtype, device=self._device),
             ]
         )
-        upper = torch.full((2 + d,), _INF, dtype=torch.float64)
+        upper = torch.full((2 + d,), _INF, dtype=self._dtype, device=self._device)
         return lower, upper
 
     def _kernel(self, X: Tensor, Y: Tensor) -> Tensor:

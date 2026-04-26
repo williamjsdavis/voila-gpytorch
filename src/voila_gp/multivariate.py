@@ -39,9 +39,17 @@ class MultiSDEVIResult:
     def state_dim(self) -> int:
         return len(self.components)
 
+    @property
+    def device(self) -> torch.device:
+        return self.components[0].device
+
+    @property
+    def dtype(self) -> torch.dtype:
+        return self.components[0].dtype
+
     def predict_drift(self, new_x: np.ndarray | Tensor) -> Tensor:
         """Posterior mean drift vector at `new_x` — shape (n_new, state_dim)."""
-        x_t = torch.as_tensor(new_x, dtype=torch.float64)
+        x_t = torch.as_tensor(new_x, dtype=self.dtype, device=self.device)
         if x_t.ndim == 1:
             x_t = x_t.reshape(-1, 1)
         out = []
@@ -63,7 +71,7 @@ class MultiSDEVIResult:
         Each component is modelled with its own log-normal GP; voila assumes
         diagonal diffusion.
         """
-        x_t = torch.as_tensor(new_x, dtype=torch.float64)
+        x_t = torch.as_tensor(new_x, dtype=self.dtype, device=self.device)
         if x_t.ndim == 1:
             x_t = x_t.reshape(-1, 1)
         out = []
@@ -101,10 +109,15 @@ class MultiSDEVI:
         drift_kernel_factory: KernelFactory,
         diff_kernel_factory: KernelFactory,
         prior_on_sd: float = 5.0,
+        *,
+        device: str | torch.device | None = None,
+        dtype: torch.dtype | None = None,
     ) -> None:
         self.drift_kernel_factory = drift_kernel_factory
         self.diff_kernel_factory = diff_kernel_factory
         self.prior_on_sd = float(prior_on_sd)
+        self.device = device
+        self.dtype = dtype
 
     def fit(
         self,
@@ -135,7 +148,12 @@ class MultiSDEVI:
                 prior_on_sd=self.prior_on_sd, target_index=target,
             )
             diff_kernel = self.diff_kernel_factory(ts, sampling_period, target)
-            fit = SDEVI(drift_kernel=drift_kernel, diff_kernel=diff_kernel)
+            fit = SDEVI(
+                drift_kernel=drift_kernel,
+                diff_kernel=diff_kernel,
+                device=self.device,
+                dtype=self.dtype,
+            )
             res = fit.fit(
                 time_series=ts, sampling_period=sampling_period,
                 inducing_points=inducing_points, v_init=diff_params["v"],
@@ -165,10 +183,13 @@ def sample_drift_functions(
     """
     from .sparse_gp import sparse_gp_intermediates
 
-    g = torch.Generator()
+    device = fit.device
+    dtype = fit.dtype
+    # CUDA generators need to be created with the matching device.
+    g = torch.Generator(device=device) if device.type == "cuda" else torch.Generator()
     if seed is not None:
         g.manual_seed(seed)
-    xnew = torch.as_tensor(new_x, dtype=torch.float64)
+    xnew = torch.as_tensor(new_x, dtype=dtype, device=device)
     if xnew.ndim == 1:
         xnew = xnew.reshape(-1, 1)
     assert fit.drift_kernel is not None, "fit must come from SDEVI.fit() with drift_kernel set"
@@ -185,8 +206,8 @@ def sample_drift_functions(
     cov = 0.5 * (cov + cov.T)
     # Add tiny jitter for Cholesky
     n = cov.shape[0]
-    cov = cov + 1e-9 * torch.eye(n, dtype=torch.float64)
+    cov = cov + 1e-9 * torch.eye(n, dtype=dtype, device=device)
     L = torch.linalg.cholesky(cov)
-    eps = torch.randn(n_samples, n, generator=g, dtype=torch.float64)
+    eps = torch.randn(n_samples, n, generator=g, dtype=dtype, device=device)
     samples = mean.detach() + eps @ L.T.detach()
     return samples

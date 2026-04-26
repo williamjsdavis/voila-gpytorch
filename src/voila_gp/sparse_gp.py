@@ -20,6 +20,7 @@ from __future__ import annotations
 import torch
 from torch import Tensor
 
+from ._compat import cholesky_inverse_compat
 from .kernels import Kernel
 
 
@@ -30,7 +31,7 @@ def _symmetric_inverse(A: Tensor) -> Tensor:
     Uses Cholesky for numerical stability.
     """
     L = torch.linalg.cholesky(A)
-    Ainv = torch.cholesky_inverse(L)
+    Ainv = cholesky_inverse_compat(L)
     return 0.5 * (Ainv + Ainv.T)
 
 

@@ -63,8 +63,8 @@ def predictive_log_likelihood(
         posterior_mean=fit.s_mean, posterior_cov=fit.s_cov,
         new_x=head, v=fit.v,
     )
-    f_mu = drift["mean"].detach().numpy()
-    g2 = diff["mean"].detach().numpy().clip(min=1e-12)
+    f_mu = drift["mean"].detach().cpu().numpy()
+    g2 = diff["mean"].detach().cpu().numpy().clip(min=1e-12)
 
     var = h * g2
     mu = h * f_mu

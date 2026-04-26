@@ -13,13 +13,14 @@ Convergence is on relative L change between outer iterations (matches reference)
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import torch
 from scipy.optimize import minimize
 from torch import Tensor
 
+from ._compat import _default_dtype_for
 from .elbo import SparseSDEModel, lower_bound
 from .kernels import Kernel
 from .posterior import update_diffusion_laplace, update_drift_closed_form
@@ -46,6 +47,8 @@ class SDEVIResult:
     diff_kernel: Kernel | None = None
     head_x: Tensor | None = None  # (n-1, d) base points; needed by predict
     sampling_period: float = 0.0
+    device: torch.device = field(default_factory=lambda: torch.device("cpu"))
+    dtype: torch.dtype = torch.float64
 
 
 @dataclass
@@ -61,6 +64,8 @@ class _State:
     f_cov: Tensor
     s_mean: Tensor
     s_cov: Tensor
+    device: torch.device = field(default_factory=lambda: torch.device("cpu"))
+    dtype: torch.dtype = torch.float64
 
 
 class SDEVI:
@@ -72,9 +77,24 @@ class SDEVI:
         res = fit.fit(time_series, sampling_period, inducing_points, v_init, ...)
     """
 
-    def __init__(self, drift_kernel: Kernel, diff_kernel: Kernel) -> None:
+    def __init__(
+        self,
+        drift_kernel: Kernel,
+        diff_kernel: Kernel,
+        *,
+        device: str | torch.device | None = None,
+        dtype: torch.dtype | None = None,
+    ) -> None:
         self.drift_kernel = drift_kernel
         self.diff_kernel = diff_kernel
+        resolved = torch.device(device) if device is not None else drift_kernel.device
+        if drift_kernel.device != resolved or diff_kernel.device != resolved:
+            raise ValueError(
+                "drift_kernel.device, diff_kernel.device, and SDEVI(device=...) must agree; got "
+                f"drift={drift_kernel.device}, diff={diff_kernel.device}, sdevi={resolved}"
+            )
+        self.device = resolved
+        self.dtype = dtype if dtype is not None else _default_dtype_for(resolved)
 
     # ------------------------------------------------------------------ utils
     def _model_matrices(self, head_x: Tensor, inducing_points: Tensor) -> tuple[dict, dict]:
@@ -109,12 +129,12 @@ class SDEVI:
         target_index: int = 0,
     ) -> _State:
         """Build the initial state matching voila's constructor."""
-        ts = torch.as_tensor(time_series, dtype=torch.float64)
+        ts = torch.as_tensor(time_series, dtype=self.dtype, device=self.device)
         if ts.ndim == 1:
             ts = ts.reshape(-1, 1)
         head_x = ts[:-1].clone()
         target = (ts[1:] - ts[:-1])[:, target_index].clone()
-        ip = torch.as_tensor(inducing_points, dtype=torch.float64).clone()
+        ip = torch.as_tensor(inducing_points, dtype=self.dtype, device=self.device).clone()
         if ip.ndim == 1:
             ip = ip.reshape(-1, 1)
         m = ip.shape[0]
@@ -127,10 +147,12 @@ class SDEVI:
             sampling_period=float(sampling_period),
             inducing_points=ip,
             v=float(v_init),
-            f_mean=torch.zeros(m, dtype=torch.float64),
+            f_mean=torch.zeros(m, dtype=self.dtype, device=self.device),
             f_cov=drift0["K_mm"].detach().clone(),
-            s_mean=torch.full((m,), float(v_init), dtype=torch.float64),
+            s_mean=torch.full((m,), float(v_init), dtype=self.dtype, device=self.device),
             s_cov=diff0["K_mm"].detach().clone(),
+            device=self.device,
+            dtype=self.dtype,
         )
 
     # -------------------------------------------------------- hp pack / bounds
@@ -139,14 +161,14 @@ class SDEVI:
 
         Order: drift_kernel_hp | diff_kernel_hp | inducing_points (flat) | v
         """
-        d_hp = self.drift_kernel.get_hyperparams().detach().numpy()
-        f_hp = self.diff_kernel.get_hyperparams().detach().numpy()
-        ip_flat = st.inducing_points.detach().numpy().reshape(-1)
+        d_hp = self.drift_kernel.get_hyperparams().detach().cpu().numpy()
+        f_hp = self.diff_kernel.get_hyperparams().detach().cpu().numpy()
+        ip_flat = st.inducing_points.detach().cpu().numpy().reshape(-1)
         x = np.concatenate([d_hp, f_hp, ip_flat, np.array([st.v])])
 
-        d_lb, d_ub = (b.numpy() for b in self.drift_kernel.hp_bounds())
-        f_lb, f_ub = (b.numpy() for b in self.diff_kernel.hp_bounds())
-        head = st.head_x.detach().numpy()
+        d_lb, d_ub = (b.cpu().numpy() for b in self.drift_kernel.hp_bounds())
+        f_lb, f_ub = (b.cpu().numpy() for b in self.diff_kernel.hp_bounds())
+        head = st.head_x.detach().cpu().numpy()
         n_pseudo, d = st.inducing_points.shape
         ip_lb = np.full(n_pseudo * d, head.min())
         ip_ub = np.full(n_pseudo * d, head.max())
@@ -166,11 +188,11 @@ class SDEVI:
     def _unzip_hp(self, x: np.ndarray, st: _State, layout: dict) -> None:
         """Inverse of `_zip_hp`. Mutates kernels and `st` in place."""
         i = 0
-        d = torch.as_tensor(x[i : i + layout["n_drift"]], dtype=torch.float64)
+        d = torch.as_tensor(x[i : i + layout["n_drift"]], dtype=st.dtype, device=st.device)
         i += layout["n_drift"]
-        f = torch.as_tensor(x[i : i + layout["n_diff"]], dtype=torch.float64)
+        f = torch.as_tensor(x[i : i + layout["n_diff"]], dtype=st.dtype, device=st.device)
         i += layout["n_diff"]
-        ip = torch.as_tensor(x[i : i + layout["n_ip"]], dtype=torch.float64).reshape(
+        ip = torch.as_tensor(x[i : i + layout["n_ip"]], dtype=st.dtype, device=st.device).reshape(
             layout["ip_shape"]
         )
         i += layout["n_ip"]
@@ -196,15 +218,19 @@ class SDEVI:
         def fun(x_np: np.ndarray, layout):
             # Set kernel hyperparameters from x_np (no autograd graph yet).
             i = 0
-            d_hp = torch.as_tensor(x_np[i : i + layout["n_drift"]], dtype=torch.float64)
-            i += layout["n_drift"]
-            f_hp = torch.as_tensor(x_np[i : i + layout["n_diff"]], dtype=torch.float64)
-            i += layout["n_diff"]
-            ip = torch.as_tensor(x_np[i : i + layout["n_ip"]], dtype=torch.float64).reshape(
-                layout["ip_shape"]
+            d_hp = torch.as_tensor(
+                x_np[i : i + layout["n_drift"]], dtype=st.dtype, device=st.device
             )
+            i += layout["n_drift"]
+            f_hp = torch.as_tensor(
+                x_np[i : i + layout["n_diff"]], dtype=st.dtype, device=st.device
+            )
+            i += layout["n_diff"]
+            ip = torch.as_tensor(
+                x_np[i : i + layout["n_ip"]], dtype=st.dtype, device=st.device
+            ).reshape(layout["ip_shape"])
             i += layout["n_ip"]
-            v_scalar = torch.as_tensor(x_np[i], dtype=torch.float64)
+            v_scalar = torch.as_tensor(x_np[i], dtype=st.dtype, device=st.device)
 
             # Re-assign kernel parameters in-place (preserves nn.Parameter identity)
             self.drift_kernel.set_hyperparams(d_hp)
@@ -237,11 +263,11 @@ class SDEVI:
             # Gather gradients in the same order as packing
             grads = []
             for n in self.drift_kernel._HP_NAMES:
-                grads.append(getattr(self.drift_kernel, n).grad.detach().reshape(-1).numpy())
+                grads.append(getattr(self.drift_kernel, n).grad.detach().reshape(-1).cpu().numpy())
             for n in self.diff_kernel._HP_NAMES:
-                grads.append(getattr(self.diff_kernel, n).grad.detach().reshape(-1).numpy())
+                grads.append(getattr(self.diff_kernel, n).grad.detach().reshape(-1).cpu().numpy())
             assert ip_leaf.grad is not None and v_leaf.grad is not None
-            grads.append(ip_leaf.grad.detach().reshape(-1).numpy())
+            grads.append(ip_leaf.grad.detach().reshape(-1).cpu().numpy())
             grads.append(np.array([float(v_leaf.grad)]))
             grad_np = np.concatenate(grads)
             return float(neg.item()), grad_np
@@ -344,4 +370,6 @@ class SDEVI:
             diff_kernel=self.diff_kernel,
             head_x=st.head_x.detach().clone(),
             sampling_period=st.sampling_period,
+            device=self.device,
+            dtype=self.dtype,
         )
