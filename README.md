@@ -43,9 +43,10 @@ constructed on the chosen device; the constructor checks consistency.
 
 ### Measured wall-clock (median of 3 runs)
 
-Per-device benchmarks live in `bench_*.json` and are collated by
-`notebooks/07_device_comparison.ipynb`. The same problems on the same fixed
-random seeds:
+Per-device benchmarks live in `benchmarks/bench_*.json` (regenerable via
+`scripts/run_device_benchmark.py` for Python and `scripts/run_r_benchmark.R`
+for the R reference) and are collated by `notebooks/07_device_comparison.ipynb`.
+The same problems on the same fixed random seeds:
 
 | problem | R reference | Mac CPU FP64 | Mac MPS FP32 | A10 CPU FP64 | A10 CUDA FP64 |
 |--|--:|--:|--:|--:|--:|

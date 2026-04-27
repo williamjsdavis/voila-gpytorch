@@ -1,12 +1,12 @@
-"""Construct the device comparison notebook from collected `bench_*.json` files.
+"""Construct the device comparison notebook from collected `benchmarks/bench_*.json` files.
 
 Run:
     uv run python scripts/build_device_comparison_notebook.py
     uv run jupyter execute --inplace notebooks/07_device_comparison.ipynb
 
-The notebook is *pure plotter*: it loads every `bench_*.json` it finds in the
-repo root and renders bar charts + speedup tables. It is meant to be re-run
-each time a new JSON arrives (e.g. after the Mac runs).
+The notebook is *pure plotter*: it loads every `bench_*.json` it finds under
+`benchmarks/` and renders bar charts + speedup tables. It is meant to be
+re-run each time a new JSON arrives (e.g. after a benchmark on a new device).
 """
 
 from __future__ import annotations
@@ -47,12 +47,13 @@ import pandas as pd
 from IPython.display import display
 
 REPO_ROOT = Path('.').resolve()
-# Notebook lives in notebooks/, JSONs live in repo root.
+# Notebook lives in notebooks/; benchmark JSONs live in benchmarks/.
 if REPO_ROOT.name == 'notebooks':
     REPO_ROOT = REPO_ROOT.parent
 
-bench_files = sorted(REPO_ROOT.glob('bench_*.json'))
-print(f'Found {len(bench_files)} benchmark file(s):')
+BENCH_DIR = REPO_ROOT / 'benchmarks'
+bench_files = sorted(BENCH_DIR.glob('bench_*.json'))
+print(f'Found {len(bench_files)} benchmark file(s) under {BENCH_DIR.name}/:')
 for p in bench_files:
     print(f'  - {p.name}')
 """),
@@ -87,8 +88,8 @@ df
 Lower is better. Bars are the median of three runs."""),
     code("""if df.empty:
     print('No benchmark data found yet — populate by running:')
-    print('  uv run python scripts/run_device_benchmark.py --device cpu  --output bench_a10_cpu.json')
-    print('  uv run python scripts/run_device_benchmark.py --device cuda --output bench_a10_cuda.json')
+    print('  uv run python scripts/run_device_benchmark.py --device cpu  --output benchmarks/bench_a10_cpu.json')
+    print('  uv run python scripts/run_device_benchmark.py --device cuda --output benchmarks/bench_a10_cuda.json')
     print('  (and similar on Mac CPU / MPS)')
 else:
     problems = list(df['problem'].unique())
@@ -224,7 +225,7 @@ else:
     md_str = (
         '### Interpretation (auto-generated from current JSONs)\\n\\n' +
         '\\n'.join(bullets) + '\\n\\n' +
-        '_Re-run this cell after dropping new `bench_*.json` files to update._'
+        '_Re-run this cell after dropping new `benchmarks/bench_*.json` files to update._'
     )
     display(Markdown(md_str))
 """),

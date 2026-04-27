@@ -2,10 +2,10 @@
 
 Run separately on every machine you want to compare:
 
-    uv run python scripts/run_device_benchmark.py --device cpu  --output bench_a10_cpu.json
-    uv run python scripts/run_device_benchmark.py --device cuda --output bench_a10_cuda.json
-    uv run python scripts/run_device_benchmark.py --device cpu  --output bench_mac_cpu.json   # on Mac
-    uv run python scripts/run_device_benchmark.py --device mps  --output bench_mac_mps.json   # on Mac
+    uv run python scripts/run_device_benchmark.py --device cpu  --output benchmarks/bench_a10_cpu.json
+    uv run python scripts/run_device_benchmark.py --device cuda --output benchmarks/bench_a10_cuda.json
+    uv run python scripts/run_device_benchmark.py --device cpu  --output benchmarks/bench_mac_cpu.json   # on Mac
+    uv run python scripts/run_device_benchmark.py --device mps  --output benchmarks/bench_mac_mps.json   # on Mac
 
 Three problems, each run REPS=3 times (median wall-clock reported):
 

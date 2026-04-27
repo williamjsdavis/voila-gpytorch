@@ -11,7 +11,7 @@
 #     R CMD INSTALL voila/                       # build the vendored package
 #
 # Run:
-#     Rscript scripts/run_r_benchmark.R --output bench_r.json
+#     Rscript scripts/run_r_benchmark.R --output benchmarks/bench_r.json
 #
 # Output schema mirrors scripts/run_device_benchmark.py so the comparison
 # notebook can ingest both with a single loader.
