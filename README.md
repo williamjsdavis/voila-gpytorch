@@ -2,6 +2,8 @@
 
 A Python/[GPyTorch](https://gpytorch.ai/) reimplementation of [`voila`](https://github.com/citiususc/voila), an R package for non-parametric estimation of Langevin equations (stochastic differential equations) from densely-observed time series.
 
+![voila-gp recovers drift and diffusion from a 1-D Ornstein–Uhlenbeck realization](static/ou_estimation.png)
+
 ## Background
 
 The original `voila` package estimates the drift and diffusion terms of a Langevin equation
@@ -42,6 +44,8 @@ MPS — Metal has no FP64 linalg). Kernels passed to `SDEVI` must already be
 constructed on the chosen device; the constructor checks consistency.
 
 ### Measured wall-clock (median of 3 runs)
+
+![Wall-clock per device on each benchmark problem](static/device_comparison.png)
 
 Per-device benchmarks live in `benchmarks/bench_*.json` (regenerable via
 `scripts/run_device_benchmark.py` for Python and `scripts/run_r_benchmark.R`
@@ -188,6 +192,8 @@ original package did not demonstrate:
    chaotic SDE from a single noisy trajectory, recover the butterfly
    attractor with drift correlations 0.999/0.995/0.998 and wing-switch
    statistics matching ground truth (median 19 vs truth's 21).
+
+![Lorenz '63 attractor: noisy data input vs voila-gp reconstruction from the inferred SDE](static/lorenz_reconstruction.png)
 
 The DO events analysis (`05_do_events_physics.ipynb`) puts these together:
 the inferred Langevin equation gives mean residence times of ~2700 yr in
