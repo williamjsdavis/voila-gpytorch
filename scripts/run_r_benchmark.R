@@ -37,8 +37,9 @@ if (length(args) >= 2 && args[1] == "--output") {
 # The OU realization is the same one used by tests/data/ornstein.npz, taken
 # from voila/data/ornstein.rda.
 data("ornstein", package = "voila")
-x_base <- ornstein$x
-h <- ornstein$samplingPeriod  # 0.001
+# ornstein ships as a `ts` (univariate) — convert to the matrix sde_vi expects.
+x_base <- matrix(as.numeric(ornstein), ncol = 1)
+h <- deltat(ornstein)  # 0.001
 
 # ---- helpers ---------------------------------------------------------------
 median_time <- function(times) {
@@ -46,63 +47,53 @@ median_time <- function(times) {
   list(wall_clock_s = times, median_s = median(times))
 }
 
-run_ou_small <- function() {
+run_one <- function(problem_name, x, m, max_iter) {
+  # voila's R API:
+  #   sde_kernel("rq_kernel",        list(amplitude, alpha, lengthScales), inputDim, epsilon)
+  #   sde_kernel("exp_const_kernel", list(maxAmplitude, expAmplitude, lengthScales), inputDim, epsilon)
+  #   sde_vi(targetIndex, x, samplingPeriod, pseudoInputs, driftKer, diffKer, v,
+  #          maxIterations=, relTol=, ...)
+  inputDim <- ncol(x)
   times <- numeric(REPS)
+  final_L <- NA_real_
+  iters <- 0L
   for (i in seq_len(REPS)) {
     set.seed(0)
-    drift_kernel <- rationalQuadraticKernel(amplitude = 5.0,
-                                            alpha = 1.0, lengthScale = 1.5,
-                                            epsilon = 1e-5)
-    diff_params <- selectDiffusionParameters(x_base, samplingPeriod = h,
-                                             priorOnSd = 5.0)
-    diff_kernel <- exponentialConstantKernel(maxAmplitude = diff_params$kernelAmplitude,
-                                             expAmplitude = diff_params$kernelAmplitude * 1e-3,
-                                             lengthScales = c(1.5),
-                                             epsilon = 1e-5)
-    inducing <- matrix(seq(min(x_base), max(x_base), length.out = 10), ncol = 1)
+    drift_kernel <- sde_kernel(
+      "rq_kernel",
+      list(amplitude = 5.0, alpha = 1.0, lengthScales = 1.5),
+      inputDim, 1e-5
+    )
+    diff_params <- select_diffusion_parameters(x, samplingPeriod = h,
+                                               priorOnSd = 5.0)
+    diff_kernel <- sde_kernel(
+      "exp_const_kernel",
+      list(maxAmplitude = diff_params$kernelAmplitude,
+           expAmplitude = diff_params$kernelAmplitude * 1e-3,
+           lengthScales = c(1.5)),
+      inputDim, 1e-5
+    )
+    inducing <- matrix(seq(min(x), max(x), length.out = m), ncol = 1)
     t0 <- Sys.time()
     fit <- sde_vi(
-      targetIndex = 1, x = x_base, samplingPeriod = h,
-      inducingPoints = inducing, v = diff_params$v,
-      driftKernel = drift_kernel, diffKernel = diff_kernel,
-      maxIterations = 5, relTol = 1e-6
+      1, x, h, inducing, drift_kernel, diff_kernel, diff_params$v,
+      maxIterations = max_iter, relTol = 1e-6
     )
     times[i] <- as.numeric(Sys.time() - t0, units = "secs")
-    final_L <- tail(fit$lowerBoundHistory, 1)
-    iters <- length(fit$lowerBoundHistory) - 1L
+    final_L <- tail(fit$likelihoodLowerBound, 1)
+    iters <- length(fit$likelihoodLowerBound) - 1L
   }
-  c(list(problem = "ou_small", final_L = final_L, iterations = iters),
+  c(list(problem = problem_name, final_L = final_L, iterations = iters),
     median_time(times))
 }
 
+run_ou_small <- function() {
+  run_one("ou_small", x_base, m = 10, max_iter = 5)
+}
+
 run_ou_medium <- function() {
-  x_med <- as.matrix(rep(as.numeric(x_base), 4))   # n ≈ 80004
-  times <- numeric(REPS)
-  for (i in seq_len(REPS)) {
-    set.seed(0)
-    drift_kernel <- rationalQuadraticKernel(amplitude = 5.0,
-                                            alpha = 1.0, lengthScale = 1.5,
-                                            epsilon = 1e-5)
-    diff_params <- selectDiffusionParameters(x_med, samplingPeriod = h,
-                                             priorOnSd = 5.0)
-    diff_kernel <- exponentialConstantKernel(maxAmplitude = diff_params$kernelAmplitude,
-                                             expAmplitude = diff_params$kernelAmplitude * 1e-3,
-                                             lengthScales = c(1.5),
-                                             epsilon = 1e-5)
-    inducing <- matrix(seq(min(x_med), max(x_med), length.out = 30), ncol = 1)
-    t0 <- Sys.time()
-    fit <- sde_vi(
-      targetIndex = 1, x = x_med, samplingPeriod = h,
-      inducingPoints = inducing, v = diff_params$v,
-      driftKernel = drift_kernel, diffKernel = diff_kernel,
-      maxIterations = 5, relTol = 1e-6
-    )
-    times[i] <- as.numeric(Sys.time() - t0, units = "secs")
-    final_L <- tail(fit$lowerBoundHistory, 1)
-    iters <- length(fit$lowerBoundHistory) - 1L
-  }
-  c(list(problem = "ou_medium", final_L = final_L, iterations = iters),
-    median_time(times))
+  x_med <- matrix(rep(as.numeric(x_base), 4), ncol = 1)   # n ≈ 80004
+  run_one("ou_medium", x_med, m = 30, max_iter = 5)
 }
 
 # ---- run -------------------------------------------------------------------

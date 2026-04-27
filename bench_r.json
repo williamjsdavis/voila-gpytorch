@@ -1,0 +1,25 @@
+{
+  "device": "r-cpu",
+  "dtype": "double",
+  "machine": {
+    "hostname": "Williams-MacBook-Pro.local",
+    "platform": "Darwin 23.6.0 arm64",
+    "r_version": "4.6.0"
+  },
+  "results": [
+    {
+      "problem": "ou_small",
+      "final_L": 36698.4746,
+      "iterations": 6,
+      "wall_clock_s": [50.4208, 50.5066, 50.5429],
+      "median_s": 50.5066
+    },
+    {
+      "problem": "ou_medium",
+      "final_L": 146829.5477,
+      "iterations": 6,
+      "wall_clock_s": [646.8232, 642.0454, 639.1468],
+      "median_s": 642.0454
+    }
+  ]
+}

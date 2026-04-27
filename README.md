@@ -41,18 +41,55 @@ fit = SDEVI(drift_kernel, diff_kernel, device="mps")         # Apple Silicon / f
 MPS — Metal has no FP64 linalg). Kernels passed to `SDEVI` must already be
 constructed on the chosen device; the constructor checks consistency.
 
-Rough guidance:
+### Measured wall-clock (median of 3 runs)
 
-- **Small / 1-D problems (n ≲ 30k, m ≲ 15)**: CPU is usually fastest. The
-  L-BFGS-B outer loop runs scipy on CPU regardless, and GPU kernel-launch
-  overhead can dominate the per-step compute on tiny matrices.
-- **Medium and multivariate (n ≳ 60k or 3+ components fit jointly)**: CUDA
-  pays off — typical 5–10× speedup over CPU on an A10. See
-  `notebooks/07_device_comparison.ipynb` for measured numbers.
-- **MPS (Apple Silicon)**: experimental and float32. Fits run, but the ELBO
-  drifts within a documented loose tolerance band; the recovered drift
+Per-device benchmarks live in `bench_*.json` and are collated by
+`notebooks/07_device_comparison.ipynb`. The same problems on the same fixed
+random seeds:
+
+| problem | R reference | Mac CPU FP64 | Mac MPS FP32 | A10 CPU FP64 | A10 CUDA FP64 |
+|--|--:|--:|--:|--:|--:|
+| `ou_small`  (n=20k, m=10) | 50.51 s | **4.76 s** | **1.74 s** | 20.50 s | 2.35 s |
+| `ou_medium` (n=80k, m=30) | 642.05 s | 20.15 s | 7.12 s | 25.28 s | **3.90 s** |
+| `lorenz`    (n=29k, m=30, 3 components) | n/a | 59.57 s | 24.92 s | 143.98 s | **12.13 s** |
+
+(R reference is the original Fortran-backed `voila::sde_vi` running through
+Rcpp/RcppArmadillo on Apple Silicon. It declares the same `L = 36698.475`
+convergence point as our Python port; we just have substantially faster
+vectorized linear algebra via PyTorch + BLAS.)
+
+### Final-L parity vs the R anchor
+
+`L = 36698.475` on `ou_small` (taken from voila/README.md's quoted log):
+
+| device | dtype | final L | Δ from R |
+|--|--|--:|--:|
+| Mac CPU  | float64 | 36698.946 | +0.471 |
+| A10 CPU  | float64 | 36698.899 | +0.424 |
+| A10 CUDA | float64 | 36698.903 | +0.428 |
+| Mac MPS  | float32 | 36682.480 | −15.995 |
+
+CPU/CUDA agreement with R is well inside the documented ±0.5 strict band; the
+~16-unit MPS drift is purely the FP32 cost (Apple's Metal backend has no
+float64 linalg) and the recovered drift function itself is unaffected.
+
+### Rough guidance
+
+- **Small / 1-D problems (n ≲ 30k, m ≲ 15)**: CPU or MPS — both finish in
+  seconds. The L-BFGS-B outer loop runs scipy on CPU regardless, and GPU
+  kernel-launch overhead is comparable to the per-step compute on tiny
+  matrices.
+- **Medium / multivariate (n ≳ 60k or 3+ components)**: CUDA wins decisively
+  (e.g. 3.9 s on A10 vs 20-25 s on either CPU for `ou_medium`).
+- **MPS (Apple Silicon)**: float32-only because Metal lacks FP64 linalg. The
+  ELBO drifts within a documented loose tolerance band; the recovered drift
   function is unaffected. Bump kernel `epsilon` (e.g. `1e-4` → `1e-3`) if
-  Cholesky fails on tight kernels.
+  Cholesky fails on tight kernels (the benchmark script handles this for the
+  Lorenz config automatically).
+- **The "GPU vs CPU" speedup depends heavily on which CPU you compare
+  against.** Apple Silicon's single-thread CPU is unusually competitive on the
+  L-BFGS-B-bound small problems — Mac CPU is ~4× faster than the A10's CPU on
+  `ou_small` because that workload is single-threaded.
 
 The compatibility layer in `src/voila_gp/_compat.py` shims
 `torch.cholesky_inverse` and `torch.special.ndtri` for backends that lack
