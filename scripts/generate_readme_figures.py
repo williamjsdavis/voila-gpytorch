@@ -193,7 +193,7 @@ def _device_comparison_figure() -> None:
     fig, axes = plt.subplots(1, len(problems), figsize=(4.0 * len(problems), 3.6), dpi=110)
     if len(problems) == 1:
         axes = [axes]
-    for ax, problem in zip(axes, problems):
+    for ax, problem in zip(axes, problems, strict=True):
         sub = sorted(
             [r for r in rows if r["problem"] == problem], key=lambda r: r["median_s"]
         )
@@ -207,14 +207,14 @@ def _device_comparison_figure() -> None:
                 colors.append("#2ca02c")  # green for CUDA
             elif "MPS" in up:
                 colors.append("#1f77b4")  # blue for MPS
-            elif "R" == up.strip() or up.startswith("R "):
+            elif up.strip() == "R" or up.startswith("R "):
                 colors.append("#7f7f7f")  # gray for R baseline
             else:
                 colors.append("#ff7f0e")  # orange for CPU
         bars = ax.barh(labels, times, color=colors)
         ax.set(xlabel="wall-clock (s)", title=problem)
         ax.set_xlim(0, max(times) * 1.18)
-        for bar, t in zip(bars, times):
+        for bar, t in zip(bars, times, strict=True):
             ax.text(t, bar.get_y() + bar.get_height() / 2, f" {t:.2f}s",
                     va="center", fontsize=9)
     fig.suptitle("Median wall-clock per device (3 runs each)", fontsize=12, y=1.02)
